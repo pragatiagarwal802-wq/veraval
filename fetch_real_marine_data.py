@@ -1,32 +1,50 @@
+```python
 """
-Fetch REAL marine + weather data for Veraval coastal nodes using Open-Meteo APIs.
-No API key needed. Free for non-commercial use.
+Fetch REAL marine + weather data for all Veraval coastal nodes
+using Open-Meteo Marine and Weather APIs.
 
-Sources:
-- Marine API   -> wave height, wave direction, sea surface temperature
-- Weather API  -> wind speed, wind direction, precipitation
+Input:
+    veraval_marine_nodes.csv
 
-Output schema matches the mock Excel (veraval_nodes_live_data_full_csv.xlsx)
-so it can be swapped in directly wherever the mock data was being used.
+Output:
+    data/veraval_nodes_REAL_data_<timestamp>.csv
 
-Install once:  pip install requests pandas openpyxl
+No API key required.
 """
 
 import time
 import requests
 import pandas as pd
+import datetime
+import os
+
+
+# ============================================================
+# API URLs
+# ============================================================
 
 MARINE_URL = "https://marine-api.open-meteo.com/v1/marine"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 
-BATCH_SIZE = 50          # Open-Meteo supports batching many coords in one call
-SLEEP_BETWEEN_BATCHES = 1  # seconds, be polite to the free tier
 
+# ============================================================
+# Settings
+# ============================================================
+
+BATCH_SIZE = 50
+SLEEP_BETWEEN_BATCHES = 1
+
+
+# ============================================================
+# Fetch data for a batch of coordinates
+# ============================================================
 
 def fetch_batch(lat_list, lon_list):
-    """One API call per batch, for ALL coordinates in that batch at once."""
+
     lat_str = ",".join(map(str, lat_list))
     lon_str = ",".join(map(str, lon_list))
+
+    # ---------------- Marine API ----------------
 
     marine_params = {
         "latitude": lat_str,
@@ -39,98 +57,282 @@ def fetch_batch(lat_list, lon_list):
         ),
         "timezone": "Asia/Kolkata",
     }
+
+    # ---------------- Weather API ----------------
+
     weather_params = {
         "latitude": lat_str,
         "longitude": lon_str,
-        "current": "wind_speed_10m,wind_direction_10m,precipitation",
+        "current": (
+            "wind_speed_10m,"
+            "wind_direction_10m,"
+            "precipitation"
+        ),
         "wind_speed_unit": "kmh",
         "timezone": "Asia/Kolkata",
     }
 
-    marine_resp = requests.get(MARINE_URL, params=marine_params, timeout=30).json()
-    weather_resp = requests.get(WEATHER_URL, params=weather_params, timeout=30).json()
+    # Request marine data
+    marine_response = requests.get(
+        MARINE_URL,
+        params=marine_params,
+        timeout=30
+    )
 
-    # When multiple coordinates are sent, Open-Meteo returns a LIST of results
-    # (one dict per coordinate, in the same order you sent them).
-    marine_list = marine_resp if isinstance(marine_resp, list) else [marine_resp]
-    weather_list = weather_resp if isinstance(weather_resp, list) else [weather_resp]
+    marine_response.raise_for_status()
+    marine_data = marine_response.json()
+
+    # Request weather data
+    weather_response = requests.get(
+        WEATHER_URL,
+        params=weather_params,
+        timeout=30
+    )
+
+    weather_response.raise_for_status()
+    weather_data = weather_response.json()
+
+    # Multiple coordinates return a list
+    marine_list = (
+        marine_data
+        if isinstance(marine_data, list)
+        else [marine_data]
+    )
+
+    weather_list = (
+        weather_data
+        if isinstance(weather_data, list)
+        else [weather_data]
+    )
+
     return marine_list, weather_list
 
 
-def safe_to_venture(wave_h, wind_kmph):
-    """
-    Placeholder safety rule — replace with real INCOIS/IMD advisory thresholds
-    once you have them. This is just so the pipeline has SOMETHING to reason over.
+# ============================================================
+# Safety / hazard rule
+# ============================================================
 
-    NOTE: we return "No hazard" instead of "None" on purpose — pandas' read_csv
-    silently converts the literal string "None" into NaN on read-back, which makes
-    it look like data is missing when it isn't.
-    """
+def safe_to_venture(wave_h, wind_kmph):
+
     if wave_h is None or wind_kmph is None:
         return None, "Data unavailable"
+
     if wave_h > 2.5 or wind_kmph > 45:
         return False, "High wave/wind"
+
     return True, "No hazard"
 
 
-def main(input_excel="veraval_nodes_live_data_full_csv.xlsx",
-         output_csv="veraval_nodes_REAL_data.csv"):
+# ============================================================
+# Main function
+# ============================================================
 
-    nodes = pd.read_excel(input_excel)[
-        ["node_id", "latitude", "longitude", "district", "zone_type"]
+def main(
+    input_csv="veraval_marine_nodes.csv",
+    output_csv="veraval_nodes_REAL_data.csv"
+):
+
+    # --------------------------------------------------------
+    # Read the 140 Veraval nodes
+    # --------------------------------------------------------
+
+    print(f"Reading nodes from: {input_csv}")
+
+    nodes = pd.read_csv(input_csv)
+
+    # --------------------------------------------------------
+    # Check required columns
+    # --------------------------------------------------------
+
+    required_columns = [
+        "node_id",
+        "latitude",
+        "longitude",
+        "district",
+        "zone_type"
     ]
 
-    results = []
-    for i in range(0, len(nodes), BATCH_SIZE):
-        chunk = nodes.iloc[i:i + BATCH_SIZE]
-        marine_list, weather_list = fetch_batch(
-            chunk["latitude"].tolist(), chunk["longitude"].tolist()
+    missing_columns = [
+        col for col in required_columns
+        if col not in nodes.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(
+            f"Missing columns in {input_csv}: {missing_columns}"
         )
 
-        for row, m, w in zip(chunk.itertuples(), marine_list, weather_list):
-            m_cur = m.get("current", {}) or {}
-            w_cur = w.get("current", {}) or {}
+    nodes = nodes[required_columns].copy()
 
-            wave_h = m_cur.get("wave_height")
-            wind_speed = w_cur.get("wind_speed_10m")
-            safe, hazard = safe_to_venture(wave_h, wind_speed)
+    print(f"Total nodes found: {len(nodes)}")
+
+    # --------------------------------------------------------
+    # Store results
+    # --------------------------------------------------------
+
+    results = []
+
+    # --------------------------------------------------------
+    # Process nodes in batches
+    # 140 nodes = 50 + 50 + 40
+    # --------------------------------------------------------
+
+    for i in range(0, len(nodes), BATCH_SIZE):
+
+        chunk = nodes.iloc[i:i + BATCH_SIZE]
+
+        print(
+            f"\nFetching nodes "
+            f"{i + 1} to {min(i + BATCH_SIZE, len(nodes))} "
+            f"of {len(nodes)}..."
+        )
+
+        marine_list, weather_list = fetch_batch(
+            chunk["latitude"].tolist(),
+            chunk["longitude"].tolist()
+        )
+
+        # ----------------------------------------------------
+        # Combine node information + API data
+        # ----------------------------------------------------
+
+        for row, marine, weather in zip(
+            chunk.itertuples(index=False),
+            marine_list,
+            weather_list
+        ):
+
+            marine_current = marine.get("current", {}) or {}
+            weather_current = weather.get("current", {}) or {}
+
+            wave_height = marine_current.get("wave_height")
+            wind_speed = weather_current.get("wind_speed_10m")
+
+            safe, hazard = safe_to_venture(
+                wave_height,
+                wind_speed
+            )
 
             results.append({
+
                 "node_id": row.node_id,
+
                 "latitude": row.latitude,
+
                 "longitude": row.longitude,
+
                 "district": row.district,
+
                 "zone_type": row.zone_type,
-                "observation_time": m_cur.get("time"),  # proves this is real, timestamped data
-                "wave_height_m": wave_h,
-                "wave_direction_deg": m_cur.get("wave_direction"),
-                "wave_period_s": m_cur.get("wave_period"),
-                "swell_wave_height_m": m_cur.get("swell_wave_height"),
-                "swell_wave_direction_deg": m_cur.get("swell_wave_direction"),
-                "swell_wave_period_s": m_cur.get("swell_wave_period"),
-                "ocean_current_velocity_kmh": m_cur.get("ocean_current_velocity"),
-                "ocean_current_direction_deg": m_cur.get("ocean_current_direction"),
-                "sst_celsius": m_cur.get("sea_surface_temperature"),
-                "wind_speed_kmph": wind_speed,
-                "wind_direction_deg": w_cur.get("wind_direction_10m"),
-                "precipitation_mm": w_cur.get("precipitation"),
-                "safe_to_venture": safe,
-                "hazard_type": hazard,
+
+                "observation_time":
+                    marine_current.get("time"),
+
+                "wave_height_m":
+                    wave_height,
+
+                "wave_direction_deg":
+                    marine_current.get("wave_direction"),
+
+                "wave_period_s":
+                    marine_current.get("wave_period"),
+
+                "swell_wave_height_m":
+                    marine_current.get("swell_wave_height"),
+
+                "swell_wave_direction_deg":
+                    marine_current.get("swell_wave_direction"),
+
+                "swell_wave_period_s":
+                    marine_current.get("swell_wave_period"),
+
+                "ocean_current_velocity_kmh":
+                    marine_current.get(
+                        "ocean_current_velocity"
+                    ),
+
+                "ocean_current_direction_deg":
+                    marine_current.get(
+                        "ocean_current_direction"
+                    ),
+
+                "sst_celsius":
+                    marine_current.get(
+                        "sea_surface_temperature"
+                    ),
+
+                "wind_speed_kmph":
+                    wind_speed,
+
+                "wind_direction_deg":
+                    weather_current.get(
+                        "wind_direction_10m"
+                    ),
+
+                "precipitation_mm":
+                    weather_current.get(
+                        "precipitation"
+                    ),
+
+                "safe_to_venture":
+                    safe,
+
+                "hazard_type":
+                    hazard,
             })
 
-        print(f"Fetched {min(i + BATCH_SIZE, len(nodes))}/{len(nodes)} nodes...")
+        print(
+            f"Completed "
+            f"{min(i + BATCH_SIZE, len(nodes))}/{len(nodes)} nodes."
+        )
+
         time.sleep(SLEEP_BETWEEN_BATCHES)
 
+    # ========================================================
+    # Create final DataFrame
+    # ========================================================
+
     real_df = pd.DataFrame(results)
-    real_df.to_csv(output_csv, index=False)
-    print(f"\nSaved real data to {output_csv}")
+
+    # --------------------------------------------------------
+    # Save CSV
+    # --------------------------------------------------------
+
+    real_df.to_csv(
+        output_csv,
+        index=False
+    )
+
+    print("\n==========================================")
+    print("DATA COLLECTION COMPLETED")
+    print("==========================================")
+
+    print(f"Nodes requested : {len(nodes)}")
+    print(f"Rows collected  : {len(real_df)}")
+    print(f"Output file     : {output_csv}")
+
+    print("\nFirst 5 rows:")
     print(real_df.head())
 
 
+# ============================================================
+# Run
+# ============================================================
+
 if __name__ == "__main__":
-    import datetime
-    import os
 
     os.makedirs("data", exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-    main(output_csv=f"data/veraval_nodes_REAL_data_{timestamp}.csv")
+
+    timestamp = datetime.datetime.now().strftime(
+        "%Y%m%d_%H%M"
+    )
+
+    output_file = (
+        f"data/veraval_nodes_REAL_data_{timestamp}.csv"
+    )
+
+    main(
+        input_csv="veraval_marine_nodes.csv",
+        output_csv=output_file
+    )
+```

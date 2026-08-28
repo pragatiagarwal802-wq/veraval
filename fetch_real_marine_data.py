@@ -1,4 +1,3 @@
-```python
 """
 Fetch REAL marine + weather data for all Veraval coastal nodes
 using Open-Meteo Marine and Weather APIs.

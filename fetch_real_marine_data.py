@@ -128,7 +128,6 @@ def main(input_excel="veraval_nodes_live_data_full_csv.xlsx",
 
 
 if __name__ == "__main__":
-    if __name__ == "__main__":
     import datetime
     import os
 

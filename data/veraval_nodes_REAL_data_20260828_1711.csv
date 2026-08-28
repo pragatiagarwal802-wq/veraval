@@ -1,4 +1,0 @@
-node_id,latitude,longitude,district,zone_type,observation_time,wave_height_m,wave_direction_deg,wave_period_s,swell_wave_height_m,swell_wave_direction_deg,swell_wave_period_s,ocean_current_velocity_kmh,ocean_current_direction_deg,sst_celsius,wind_speed_kmph,wind_direction_deg,precipitation_mm,safe_to_venture,hazard_type
-1,20.9,70.3,Veraval,Coastal,2026-08-28T22:30,2.16,239,8.0,1.82,237,6.8,2.1,121,26.3,18.7,253,0.0,True,No hazard
-2,20.95,70.35,Veraval,Coastal,2026-08-28T22:30,2.08,238,8.0,1.82,237,6.7,1.9,139,25.8,15.4,253,0.0,True,No hazard
-3,21.0,70.4,Veraval,Coastal,2026-08-28T22:30,2.08,238,8.0,1.82,237,6.7,1.9,139,25.8,15.4,253,0.0,True,No hazard

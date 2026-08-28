@@ -36,7 +36,7 @@ SLEEP_BETWEEN_BATCHES = 1
 
 
 # ============================================================
-# Fetch data for a batch of coordinates
+# Fetch marine and weather data
 # ============================================================
 
 def fetch_batch(lat_list, lon_list):
@@ -44,21 +44,22 @@ def fetch_batch(lat_list, lon_list):
     lat_str = ",".join(map(str, lat_list))
     lon_str = ",".join(map(str, lon_list))
 
-    # ---------------- Marine API ----------------
-
     marine_params = {
         "latitude": lat_str,
         "longitude": lon_str,
         "current": (
-            "wave_height,wave_direction,wave_period,"
-            "swell_wave_height,swell_wave_direction,swell_wave_period,"
-            "ocean_current_velocity,ocean_current_direction,"
+            "wave_height,"
+            "wave_direction,"
+            "wave_period,"
+            "swell_wave_height,"
+            "swell_wave_direction,"
+            "swell_wave_period,"
+            "ocean_current_velocity,"
+            "ocean_current_direction,"
             "sea_surface_temperature"
         ),
-        "timezone": "Asia/Kolkata",
+        "timezone": "Asia/Kolkata"
     }
-
-    # ---------------- Weather API ----------------
 
     weather_params = {
         "latitude": lat_str,
@@ -69,10 +70,10 @@ def fetch_batch(lat_list, lon_list):
             "precipitation"
         ),
         "wind_speed_unit": "kmh",
-        "timezone": "Asia/Kolkata",
+        "timezone": "Asia/Kolkata"
     }
 
-    # Request marine data
+    # Marine API request
     marine_response = requests.get(
         MARINE_URL,
         params=marine_params,
@@ -82,7 +83,7 @@ def fetch_batch(lat_list, lon_list):
     marine_response.raise_for_status()
     marine_data = marine_response.json()
 
-    # Request weather data
+    # Weather API request
     weather_response = requests.get(
         WEATHER_URL,
         params=weather_params,
@@ -109,15 +110,15 @@ def fetch_batch(lat_list, lon_list):
 
 
 # ============================================================
-# Safety / hazard rule
+# Safety / hazard calculation
 # ============================================================
 
-def safe_to_venture(wave_h, wind_kmph):
+def safe_to_venture(wave_height, wind_speed):
 
-    if wave_h is None or wind_kmph is None:
+    if wave_height is None or wind_speed is None:
         return None, "Data unavailable"
 
-    if wave_h > 2.5 or wind_kmph > 45:
+    if wave_height > 2.5 or wind_speed > 45:
         return False, "High wave/wind"
 
     return True, "No hazard"
@@ -133,7 +134,7 @@ def main(
 ):
 
     # --------------------------------------------------------
-    # Read the 140 Veraval nodes
+    # Read all 140 nodes
     # --------------------------------------------------------
 
     print(f"Reading nodes from: {input_csv}")
@@ -141,7 +142,7 @@ def main(
     nodes = pd.read_csv(input_csv)
 
     # --------------------------------------------------------
-    # Check required columns
+    # Required columns
     # --------------------------------------------------------
 
     required_columns = [
@@ -153,8 +154,9 @@ def main(
     ]
 
     missing_columns = [
-        col for col in required_columns
-        if col not in nodes.columns
+        column
+        for column in required_columns
+        if column not in nodes.columns
     ]
 
     if missing_columns:
@@ -163,6 +165,11 @@ def main(
         )
 
     nodes = nodes[required_columns].copy()
+
+    # Remove rows with missing coordinates
+    nodes = nodes.dropna(
+        subset=["latitude", "longitude"]
+    )
 
     print(f"Total nodes found: {len(nodes)}")
 
@@ -174,16 +181,23 @@ def main(
 
     # --------------------------------------------------------
     # Process nodes in batches
-    # 140 nodes = 50 + 50 + 40
     # --------------------------------------------------------
 
     for i in range(0, len(nodes), BATCH_SIZE):
 
-        chunk = nodes.iloc[i:i + BATCH_SIZE]
+        chunk = nodes.iloc[
+            i:i + BATCH_SIZE
+        ]
+
+        start_node = i + 1
+        end_node = min(
+            i + BATCH_SIZE,
+            len(nodes)
+        )
 
         print(
             f"\nFetching nodes "
-            f"{i + 1} to {min(i + BATCH_SIZE, len(nodes))} "
+            f"{start_node} to {end_node} "
             f"of {len(nodes)}..."
         )
 
@@ -193,7 +207,7 @@ def main(
         )
 
         # ----------------------------------------------------
-        # Combine node information + API data
+        # Combine node information with API data
         # ----------------------------------------------------
 
         for row, marine, weather in zip(
@@ -202,11 +216,21 @@ def main(
             weather_list
         ):
 
-            marine_current = marine.get("current", {}) or {}
-            weather_current = weather.get("current", {}) or {}
+            marine_current = (
+                marine.get("current", {}) or {}
+            )
 
-            wave_height = marine_current.get("wave_height")
-            wind_speed = weather_current.get("wind_speed_10m")
+            weather_current = (
+                weather.get("current", {}) or {}
+            )
+
+            wave_height = marine_current.get(
+                "wave_height"
+            )
+
+            wind_speed = weather_current.get(
+                "wind_speed_10m"
+            )
 
             safe, hazard = safe_to_venture(
                 wave_height,
@@ -215,15 +239,20 @@ def main(
 
             results.append({
 
-                "node_id": row.node_id,
+                "node_id":
+                    row.node_id,
 
-                "latitude": row.latitude,
+                "latitude":
+                    row.latitude,
 
-                "longitude": row.longitude,
+                "longitude":
+                    row.longitude,
 
-                "district": row.district,
+                "district":
+                    row.district,
 
-                "zone_type": row.zone_type,
+                "zone_type":
+                    row.zone_type,
 
                 "observation_time":
                     marine_current.get("time"),
@@ -232,19 +261,29 @@ def main(
                     wave_height,
 
                 "wave_direction_deg":
-                    marine_current.get("wave_direction"),
+                    marine_current.get(
+                        "wave_direction"
+                    ),
 
                 "wave_period_s":
-                    marine_current.get("wave_period"),
+                    marine_current.get(
+                        "wave_period"
+                    ),
 
                 "swell_wave_height_m":
-                    marine_current.get("swell_wave_height"),
+                    marine_current.get(
+                        "swell_wave_height"
+                    ),
 
                 "swell_wave_direction_deg":
-                    marine_current.get("swell_wave_direction"),
+                    marine_current.get(
+                        "swell_wave_direction"
+                    ),
 
                 "swell_wave_period_s":
-                    marine_current.get("swell_wave_period"),
+                    marine_current.get(
+                        "swell_wave_period"
+                    ),
 
                 "ocean_current_velocity_kmh":
                     marine_current.get(
@@ -278,15 +317,17 @@ def main(
                     safe,
 
                 "hazard_type":
-                    hazard,
+                    hazard
             })
 
         print(
             f"Completed "
-            f"{min(i + BATCH_SIZE, len(nodes))}/{len(nodes)} nodes."
+            f"{end_node}/{len(nodes)} nodes."
         )
 
-        time.sleep(SLEEP_BETWEEN_BATCHES)
+        time.sleep(
+            SLEEP_BETWEEN_BATCHES
+        )
 
     # ========================================================
     # Create final DataFrame
@@ -294,9 +335,9 @@ def main(
 
     real_df = pd.DataFrame(results)
 
-    # --------------------------------------------------------
-    # Save CSV
-    # --------------------------------------------------------
+    # ========================================================
+    # Save output
+    # ========================================================
 
     real_df.to_csv(
         output_csv,
@@ -307,28 +348,41 @@ def main(
     print("DATA COLLECTION COMPLETED")
     print("==========================================")
 
-    print(f"Nodes requested : {len(nodes)}")
-    print(f"Rows collected  : {len(real_df)}")
-    print(f"Output file     : {output_csv}")
+    print(
+        f"Nodes requested : {len(nodes)}"
+    )
+
+    print(
+        f"Rows collected  : {len(real_df)}"
+    )
+
+    print(
+        f"Output file     : {output_csv}"
+    )
 
     print("\nFirst 5 rows:")
     print(real_df.head())
 
 
 # ============================================================
-# Run
+# Run program
 # ============================================================
 
 if __name__ == "__main__":
 
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(
+        "data",
+        exist_ok=True
+    )
 
     timestamp = datetime.datetime.now().strftime(
         "%Y%m%d_%H%M"
     )
 
     output_file = (
-        f"data/veraval_nodes_REAL_data_{timestamp}.csv"
+        f"data/"
+        f"veraval_nodes_REAL_data_"
+        f"{timestamp}.csv"
     )
 
     main(

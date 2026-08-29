@@ -2,18 +2,12 @@ name: Fetch Real Marine Data
 
 on:
   schedule:
-    - cron: "30 1 * * *"
-    - cron: "30 7 * * *"
-    - cron: "30 13 * * *"
+    - cron: "5 * * * *"
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   fetch-data:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4

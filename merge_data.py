@@ -1,26 +1,109 @@
 import pandas as pd
+import glob
 import os
 
-master_file = "data/veraval_master_data.csv"
-new_file = "data/new_data.csv"
+# Folder containing the fetched CSV files
+DATA_FOLDER = "data"
 
-# Read existing master
-if os.path.exists(master_file):
-    master = pd.read_csv(master_file)
+# Master dataset
+MASTER_FILE = os.path.join(DATA_FOLDER, "veraval_master_data.csv")
+
+# Find all CSV files in data folder
+all_files = glob.glob(os.path.join(DATA_FOLDER, "*.csv"))
+
+# Remove the master file from the list
+data_files = [
+    file for file in all_files
+    if os.path.abspath(file) != os.path.abspath(MASTER_FILE)
+]
+
+print(f"Found {len(data_files)} data files.")
+
+if not data_files:
+    print("No data files found.")
+    exit()
+
+# Read all existing data files
+dataframes = []
+
+for file in data_files:
+    try:
+        df = pd.read_csv(file)
+
+        # Keep track of where the data came from
+        df["source_file"] = os.path.basename(file)
+
+        dataframes.append(df)
+
+        print(
+            f"Loaded {os.path.basename(file)} "
+            f"({len(df)} rows)"
+        )
+
+    except Exception as e:
+        print(f"Could not read {file}: {e}")
+
+# Combine everything
+master_df = pd.concat(
+    dataframes,
+    ignore_index=True
+)
+
+print("\nBefore removing duplicates:")
+print(f"Rows: {len(master_df)}")
+
+# Remove exact duplicate rows
+master_df.drop_duplicates(inplace=True)
+
+# Reset index
+master_df.reset_index(drop=True, inplace=True)
+
+# Try to find timestamp column
+time_columns = [
+    "timestamp",
+    "time",
+    "datetime",
+    "date_time",
+    "date"
+]
+
+time_column = None
+
+for column in time_columns:
+    if column in master_df.columns:
+        time_column = column
+        break
+
+# Sort by timestamp if available
+if time_column:
+
+    master_df[time_column] = pd.to_datetime(
+        master_df[time_column],
+        errors="coerce"
+    )
+
+    master_df = master_df.sort_values(
+        by=time_column
+    )
+
+    print(f"Sorted by: {time_column}")
+
 else:
-    master = pd.DataFrame()
+    print("No timestamp column found.")
 
-# Read newly fetched data
-new_data = pd.read_csv(new_file)
+# Save master dataset
+master_df.to_csv(
+    MASTER_FILE,
+    index=False
+)
 
-# Add new data
-master = pd.concat([master, new_data], ignore_index=True)
+print("\n==============================")
+print("MASTER DATASET UPDATED")
+print("==============================")
+print(f"File: {MASTER_FILE}")
+print(f"Rows: {len(master_df)}")
+print(f"Columns: {len(master_df.columns)}")
 
-# Remove duplicate records
-master.drop_duplicates(inplace=True)
-
-# Save updated master
-master.to_csv(master_file, index=False)
-
-print("Master dataset updated!")
-print("Total records:", len(master))
+# Missing values
+print("\nMissing values:")
+print(master_df.isnull().sum())

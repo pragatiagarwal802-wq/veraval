@@ -8,6 +8,7 @@ on:
 jobs:
   fetch-data:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -20,13 +21,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # 1. Fetch latest marine data
       - name: Run fetch script
         run: python fetch_real_marine_data.py
 
+      # 2. Merge all fetched CSV files
+      - name: Merge datasets
+        run: python merge_data.py
+
+      # 3. Commit updated data to GitHub
       - name: Commit and push new data
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
           git add data/
-          git diff --staged --quiet || git commit -m "Auto-fetch marine data $(date -u +'%Y-%m-%d %H:%M UTC')"
+
+          git diff --staged --quiet || git commit -m "Auto-update marine data $(date -u +'%Y-%m-%d %H:%M UTC')"
+
           git push

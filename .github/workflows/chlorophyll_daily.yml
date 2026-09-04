@@ -1,0 +1,40 @@
+name: Daily Chlorophyll Fetch
+
+on:
+  schedule:
+    # Runs at 03:00 UTC every day (~8:30 AM IST). Adjust the hour as needed --
+    # cron times are always UTC, not your local timezone.
+    - cron: '0 3 * * *'
+  workflow_dispatch:   # lets you also trigger it manually from the Actions tab
+
+permissions:
+  contents: write   # needed so the workflow can commit the updated CSV back
+
+jobs:
+  fetch-chlorophyll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install copernicusmarine pandas xarray netCDF4
+
+      - name: Run daily chlorophyll fetch
+        env:
+          COPERNICUSMARINE_SERVICE_USERNAME: ${{ secrets.COPERNICUSMARINE_SERVICE_USERNAME }}
+          COPERNICUSMARINE_SERVICE_PASSWORD: ${{ secrets.COPERNICUSMARINE_SERVICE_PASSWORD }}
+        run: python daily_chlorophyll_fetch.py
+
+      - name: Commit and push updated history file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add veraval_chlorophyll_history.csv
+          git diff --staged --quiet || git commit -m "Daily chlorophyll update $(date -u +'%Y-%m-%d')"
+          git push
